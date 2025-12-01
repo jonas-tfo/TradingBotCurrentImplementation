@@ -1,9 +1,8 @@
-from multiprocessing import util
-from tradingfunctions import * 
-import datetime
+from tradingfunctions import *
+from datetime import datetime, time as dt_time
 import time
 import math
-from ib_insync import IB, Stock, MarketOrder, StopOrder
+from ib_insync import IB, Stock, MarketOrder, StopOrder, util
 import traceback
 import asyncio
 
@@ -86,17 +85,20 @@ german_tickers = dax40_tickers + sdax_tickers + mdax_tickers + tecdax_tickers
 class MinimalTradingApp:
 
     def __init__(self):
-
         # Initialize IB connection
         try:
             self.ib = IB()
+            print("Connecting to Interactive Brokers...")
             self.ib.connect('127.0.0.1', 7497, clientId=1)
 
-            if not self.ib or not self.ib.isConnected():
+            if self.ib.isConnected():
+                print(f"Successfully connected to IB (Connected: {self.ib.isConnected()})")
+            else:
                 print("Failed to connect to IB")
                 self.ib = None
         except Exception as e:
             print(f"Failed to initialize IB connection: {e}")
+            traceback.print_exc()
             self.ib = None
 
 
@@ -108,32 +110,32 @@ class MinimalTradingApp:
     def us_market_is_open(self):
         try:
             from zoneinfo import ZoneInfo
-            now = datetime.datetime.now(ZoneInfo("America/New_York"))
+            now = datetime.now(ZoneInfo("America/New_York"))
             is_weekday = now.weekday() < 5
-            is_trading_hours = datetime.time(9, 20) <= now.time() <= datetime.time(16, 0)
+            is_trading_hours = dt_time(9, 20) <= now.time() <= dt_time(16, 0)
             return is_weekday and is_trading_hours
         except ImportError:
             import pytz
             EST = pytz.timezone("America/New_York")
-            now = datetime.datetime.now(EST)
+            now = datetime.now(EST)
             is_weekday = now.weekday() < 5
-            is_trading_hours = datetime.time(9, 20) <= now.time() <= datetime.time(16, 0)
+            is_trading_hours = dt_time(9, 20) <= now.time() <= dt_time(16, 0)
             return is_weekday and is_trading_hours
 
 
     def european_market_is_open(self):
         try:
             from zoneinfo import ZoneInfo
-            now = datetime.datetime.now(ZoneInfo("Europe/Berlin"))
+            now = datetime.now(ZoneInfo("Europe/Berlin"))
             is_weekday = now.weekday() < 5
-            is_trading_hours = datetime.time(8, 0) <= now.time() <= datetime.time(17, 30)
+            is_trading_hours = dt_time(8, 0) <= now.time() <= dt_time(17, 30)
             return is_weekday and is_trading_hours
         except ImportError:
             import pytz
             CET = pytz.timezone("Europe/Berlin")
-            now = datetime.datetime.now(CET)
+            now = datetime.now(CET)
             is_weekday = now.weekday() < 5
-            is_trading_hours = datetime.time(8, 0) <= now.time() <= datetime.time(17, 30)
+            is_trading_hours = dt_time(8, 0) <= now.time() <= dt_time(17, 30)
             return is_weekday and is_trading_hours
 
 
@@ -233,9 +235,9 @@ class MinimalTradingApp:
         return None
 
 
-    def _execute_stop_loss_sell_order(self, symbol, contract):
+    async def _execute_stop_loss_sell_order(self, symbol, contract):
         # Retrieve account info and position details
-        account_info = self.get_ib_account_info()
+        account_info = await self.get_ib_account_info()
         pos_info = account_info["positions"].get(symbol)
         if pos_info is None:
             # Try base symbol if suffixed symbol not found (e.g., "AAPL" from "AAPL.NASDAQ")
@@ -524,9 +526,9 @@ class MinimalTradingApp:
         
 
 
-    def get_ib_total_networth(self) -> dict:
+    async def get_ib_total_networth(self) -> dict:
         try:
-            account_info = self.get_ib_account_info()
+            account_info = await self.get_ib_account_info()
             cash_eur = float(account_info['summary']['NetLiquidation']['value'])
             positions = account_info.get('positions', {})
             total_stock_value_eur = 0.0
@@ -536,56 +538,56 @@ class MinimalTradingApp:
 
                 current_price = get_stock_closing_price(symbol) # type: ignore
                 shares = float(info['shares'])
-                
+
                 # Convert USD values to EUR if needed
                 if info.get('exchange') in US_EXCHANGES:
                     current_price_eur = current_price / eur_usd_rate
                 else:
                     current_price_eur = current_price
-                    
+
                 total_stock_value_eur += shares * current_price_eur
 
             return float(cash_eur + total_stock_value_eur)
-            
+
         except Exception as e:
             print(f"Error retrieving total networth: {e}")
             return 0.0
 
 
 
-    def get_ib_cash_balance(self) -> float:
+    async def get_ib_cash_balance(self) -> float:
         try:
             if not self.ib.isConnected():
                 self.ib.connect('127.0.0.1', 7497, clientId=1)
-                
-            # Get account summary
-            account_values = self.ib.accountSummary()
-            
+
+            # Get account summary using async version
+            account_values = await self.ib.accountSummaryAsync()
+
 
             for value in account_values:
                 if value.tag == 'TotalCashValue':
                     available_funds = float(value.value)
                     break
-            
+
             print(f"Available cash balance: {available_funds} EUR")
             return float(available_funds)
-            
+
         except Exception as e:
             print(f"Error getting cash balance: {e}")
             return 0.0
         
 
 
-    def get_ib_account_info(self) -> dict:
+    async def get_ib_account_info(self) -> dict:
         if self.ib is None:
             raise ValueError("IB connection is not established. Please check your connection.")
-        
-        # Get account summary
-        account_summary = self.ib.accountSummary()
-        summary_dict = {item.tag: {'value': item.value, 'currency': item.currency} 
+
+        # Get account summary using async version
+        account_summary = await self.ib.accountSummaryAsync()
+        summary_dict = {item.tag: {'value': item.value, 'currency': item.currency}
                     for item in account_summary}
-        
-        # Get positions with correct attribute names
+
+        # Get positions - positions() is synchronous and safe to call
         positions = self.ib.positions()
         positions_dict = {
             pos.contract.symbol: {
@@ -593,7 +595,7 @@ class MinimalTradingApp:
                 'avg_cost': pos.avgCost,
                 'market_price': pos.contract.lastTradingDate if hasattr(pos.contract, 'lastTradingDate') else 0.0,
                 'exchange': pos.contract.exchange  # Add exchange information
-            } 
+            }
             for pos in positions
         }
         
@@ -626,13 +628,15 @@ class MinimalTradingApp:
 
     # main function that handles the score generation and the orders according to the scores
     async def main_retrieve_scores_buy_sell_worker(self):
-        
+        print("main_retrieve_scores_buy_sell_worker started!")
+
         while True:
             try:
+                print("Fetching account info...")
                 # Fetch account info once at the start
-                account_info = self.get_ib_account_info()
-                available_funds = self.get_ib_cash_balance()
-                total_networth = self.get_ib_total_networth()
+                account_info = await self.get_ib_account_info()
+                available_funds = await self.get_ib_cash_balance()
+                total_networth = await self.get_ib_total_networth()
                 positions = account_info['positions']
 
                 # Early exit if no funds and no positions
@@ -731,8 +735,8 @@ class MinimalTradingApp:
                     if stock.split('.')[0] in german_tickers and not stock.endswith('.DE'):
                         stock = f"{stock}.DE"
                         print(f"Corrected German stock symbol to: {stock}")
-                    
-                    available_funds = self.get_ib_cash_balance()
+
+                    available_funds = await self.get_ib_cash_balance()
 
                     # this might not be needed
                     if self.get_stock_exchange(stock) in US_EXCHANGES:
@@ -829,7 +833,7 @@ class MinimalTradingApp:
                 # TODO -- maybe add safeguard here if cash balance goes below 0
                 for stock, buy_value in buy_amounts.items():
 
-                    cash_balance = self.get_ib_cash_balance()
+                    cash_balance = await self.get_ib_cash_balance()
 
                     if cash_balance <= 0:
                         print("No cash balance available for buying stocks.")
@@ -857,19 +861,21 @@ class MinimalTradingApp:
                 print(f"Error in retrieve_scores_buy_sell_worker: {e}")
                 traceback.print_exc()
             finally:
-                print(f"main_retrieve_scores_buy_sell_worker done, running again in 60 minutes from {datetime.datetime.now()}...")
+                print(f"main_retrieve_scores_buy_sell_worker done, running again in 60 minutes from {datetime.now()}...")
                 await asyncio.sleep(60 * 60)  # Sleep for 60 minutes
 
 
-    # sub function that makes tweaks to the current holdings based on the most recent information 
+    # sub function that makes tweaks to the current holdings based on the most recent information
     async def sub_retrieve_scores_buy_sell_worker(self):
-            
+        print("sub_retrieve_scores_buy_sell_worker started!")
+
         while True:
             try:
+                print("Sub worker: Fetching account info...")
                 # Fetch account info once at the start
-                account_info = self.get_ib_account_info()
-                available_cash = self.get_ib_cash_balance()
-                total_networth = self.get_ib_total_networth()
+                account_info = await self.get_ib_account_info()
+                available_cash = await self.get_ib_cash_balance()
+                total_networth = await self.get_ib_total_networth()
                 positions = account_info['positions']
 
                 # Early exit if no funds and no positions
@@ -914,11 +920,11 @@ class MinimalTradingApp:
 
                 for stock, buy_value in buy_amounts.items():
 
-                    
+
                     if total_buy_amount - buy_value <= 0:
                         break
 
-                    cash_balance = self.get_ib_cash_balance()
+                    cash_balance = await self.get_ib_cash_balance()
 
                     if buy_value > 0 and cash_balance >= buy_value:
                         # First ensure proper German stock formatting
@@ -947,22 +953,37 @@ class MinimalTradingApp:
                 print(f"Error in retrieve_scores_buy_sell_worker: {e}")
                 traceback.print_exc()
             finally:
-                print(f"sub_retrieve_scores_buy_sell_worker done, running again in 25 minutes from {datetime.datetime.now()}...") 
+                print(f"sub_retrieve_scores_buy_sell_worker done, running again in 25 minutes from {datetime.now()}...") 
                 await asyncio.sleep(25 * 60)  # Sleep for 25 minutes
 
 
 
-    """Schedules both functions to run concurrently, main every hour, sub every 20min"""
+    """Schedules both functions to run concurrently"""
     async def main(self):
+        print("Starting main async function...")
+        print("Creating worker tasks...")
         task1 = asyncio.create_task(self.sub_retrieve_scores_buy_sell_worker())  # Runs every 20 min
         task2 = asyncio.create_task(self.main_retrieve_scores_buy_sell_worker()) # Runs every 60 min
+        print("Worker tasks created, starting execution...")
         await asyncio.gather(task1, task2)
 
 
 if __name__ == "__main__":
 
-    util.startLoop()   
+    print("Starting...")
+
+    # Start ib_insync event loop in a separate thread
+    # This is required for async methods to work properly
+    print("Starting ib_insync event loop...")
+    util.startLoop()
+    print("Event loop started.")
+
     app = MinimalTradingApp()
- 
-    asyncio.run(app.main())
-    
+    try:
+        asyncio.run(app.main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Program shut down by user.")
+    finally:
+        if app.ib and app.ib.isConnected():
+            app.ib.disconnect()
+            print("Disconnected from IB.")

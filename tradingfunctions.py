@@ -1,7 +1,7 @@
 import requests
 import re
 from collections import defaultdict
-from google import genai
+from mistralai import Mistral
 import time
 import yfinance as yf
 from ib_insync import *
@@ -95,7 +95,7 @@ german_tickers = dax40_tickers + sdax_tickers + mdax_tickers + tecdax_tickers
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY")
 
@@ -105,9 +105,9 @@ US_EXCHANGES = ['NYQ', 'NMS', 'ASE', 'AMEX', 'OTC', 'TSX', 'NASDAQ', 'NYSE', 'BA
 EUROPEAN_EXCHANGES = ['LSE', 'FRA', 'AMS', 'MC', 'SWX', 'GER', 'XETRA', 'BME', 'STO', 'ICE', 'ASX', 'HKEX', 'NSE', 'TSE', 'SSE', 'JSE', 'BSE', 'KRX', 'TWSE', 'SGX', 'IDX', 'SET', 'MYX', 'PSE', 'HOSE', 'HNX', 'KASE', 'TASE', 'BCBA', 'BVMF', 'BMV', 'BVC', 'BVLP', 'BVL', 'IBIS']
 
 
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+mistral_client = Mistral(api_key=MISTRAL_API_KEY)
 
-gemini_model = "gemini-1.5-flash-8b"
+mistral_model = "mistral-small-latest"
 
 """
 Functions to retrieve articles via API/webscraping
@@ -250,13 +250,13 @@ def get_articles_finanznachrichten(url) -> list:
 
 
 def get_articles_cnbc_latest(url) -> list:
-    
+
     try:
         # Set up Selenium with Chrome
         chrome_options = Options()
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--remote-debugging-port=9222")  
+        chrome_options.add_argument("--remote-debugging-port=9222")
         chrome_options.add_argument("--headless=new")  # doesnt open a window when scraping
 
         # Install matching chromedriver
@@ -271,6 +271,7 @@ def get_articles_cnbc_latest(url) -> list:
     try:
         # Fetch the main page
         try:
+            driver.set_page_load_timeout(15)
             driver.get(url)
             driver.implicitly_wait(10)  # Wait for page to load
         except Exception as e:
@@ -315,6 +316,7 @@ def get_articles_cnbc_latest(url) -> list:
         full_articles = []
         for item in articles_data[:15]:  # Limit to 15 articles per page
             try:
+                driver.set_page_load_timeout(10)
                 driver.get(item['url'])
                 driver.implicitly_wait(5)
                 soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -377,7 +379,8 @@ def get_articles_finanzen_latest(url) -> list:
         return []
 
     try:
-        # Load the page
+        # Load the page with timeout
+        driver.set_page_load_timeout(15)
         driver.get(url)
         driver.implicitly_wait(10)
 
@@ -412,6 +415,7 @@ def get_articles_finanzen_latest(url) -> list:
         full_articles = []
         for item in articles_data:  # Limit to 15 articles
             try:
+                driver.set_page_load_timeout(10)
                 driver.get(item['url'])
                 driver.implicitly_wait(5)
                 soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -464,9 +468,10 @@ def get_articles_stocktitan_latest(url) -> list:
         return []
 
     try:
-        # Load the page
+        # Load the page with timeout
+        driver.set_page_load_timeout(15)
         driver.get(url)
-        driver.implicitly_wait(40)
+        driver.implicitly_wait(10)
 
         # Extract page source and parse with BeautifulSoup
         soup = BeautifulSoup(driver.page_source, 'html.parser')
@@ -500,10 +505,11 @@ def get_articles_stocktitan_latest(url) -> list:
 
         # Scrape article content
         full_articles = []
-        for item in articles_data[:5]: 
+        for item in articles_data[:5]:
             try:
+                driver.set_page_load_timeout(10)
                 driver.get(item['url'])
-                driver.implicitly_wait(20)
+                driver.implicitly_wait(10)
                 soup = BeautifulSoup(driver.page_source, 'html.parser')
 
                 # Find the main content div (update if needed)
@@ -580,12 +586,16 @@ def get_scores_from_llm(article_text, stocks) -> str:
         """
     )
     try:
-        response = gemini_client.models.generate_content(model=gemini_model, contents=prompt)
-        time.sleep(5) 
-        print("Got response for article:", response.text)
-        return response.text
+        response = mistral_client.chat.complete(
+            model=mistral_model,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        time.sleep(5)
+        response_text = response.choices[0].message.content
+        print("Got response for article:", response_text)
+        return response_text
     except Exception as e:
-        print(f"Gemini API error: {e}")
+        print(f"Mistral API error: {e}")
         time.sleep(5)
         return ""
 
@@ -623,14 +633,18 @@ def get_scores_from_llm_global(article_text) -> str:
     {article_text}
     """
     )
-        
+
     try:
-        response = gemini_client.models.generate_content(model=gemini_model, contents=prompt)
-        time.sleep(5) 
-        print(f"Got response for article: {response.text}")
-        return response.text
+        response = mistral_client.chat.complete(
+            model=mistral_model,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        time.sleep(5)
+        response_text = response.choices[0].message.content
+        print(f"Got response for article: {response_text}")
+        return response_text
     except Exception as e:
-        print(f"Gemini API error: {e}")
+        print(f"Mistral API error: {e}")
         time.sleep(5)
         return ""
 
@@ -659,13 +673,16 @@ def get_trade_term_scores_from_llm(article_text) -> str:
         """
     )
     try:
-        response = gemini_client.models.generate_content(model=gemini_model, contents=prompt)
+        response = mistral_client.chat.complete(
+            model=mistral_model,
+            messages=[{"role": "user", "content": prompt}]
+        )
         time.sleep(5)  # rate-limit safeguard
-        response_text = response.text if hasattr(response, 'text') else str(response)
+        response_text = response.choices[0].message.content
         print(f"Got response for article (trade term): {response_text}")
         return response_text
     except Exception as e:
-        print(f"Gemini API error (trade term): {e}")
+        print(f"Mistral API error (trade term): {e}")
         time.sleep(5)
         return ""
 
@@ -987,17 +1004,68 @@ def get_final_scores_web_english() -> dict:
 
 
 def get_all_trade_term_scores() -> dict:
-    # Process trade term scores 
+    # Process trade term scores
     trade_term_scores_accum = {}
-    term_articles = (
-        get_articles() +
-        get_articles_finanznachrichten("https://www.finanznachrichten.de/nachrichten-index/dax-40.htm") +
-        get_articles_finanznachrichten("https://www.finanznachrichten.de/nachrichten-index/sdax.htm") +
-        get_articles_finanznachrichten("https://www.finanznachrichten.de/nachrichten-index/mdax-50.htm") +
-        get_articles_finanznachrichten("https://www.finanznachrichten.de/nachrichten-index/tecdax.htm") +
-        get_articles_cnbc_latest("https://www.cnbc.com/") +
-        get_articles_finanzen_latest("https://www.finanzen.net/nachrichten/ressort/aktien")
-    )
+    term_articles = []
+
+    # Fetch articles with individual error handling to prevent one failure from blocking everything
+    print("Fetching Alpha Vantage articles...")
+    try:
+        alpha_articles = get_articles()
+        print(f"Got {len(alpha_articles)} Alpha Vantage articles")
+        term_articles.extend(alpha_articles)
+    except Exception as e:
+        print(f"Error fetching Alpha Vantage articles: {e}")
+
+    print("Fetching DAX-40 articles...")
+    try:
+        dax_articles = get_articles_finanznachrichten("https://www.finanznachrichten.de/nachrichten-index/dax-40.htm")
+        print(f"Got {len(dax_articles)} DAX-40 articles")
+        term_articles.extend(dax_articles)
+    except Exception as e:
+        print(f"Error fetching DAX-40 articles: {e}")
+
+    print("Fetching SDAX articles...")
+    try:
+        sdax_articles = get_articles_finanznachrichten("https://www.finanznachrichten.de/nachrichten-index/sdax.htm")
+        print(f"Got {len(sdax_articles)} SDAX articles")
+        term_articles.extend(sdax_articles)
+    except Exception as e:
+        print(f"Error fetching SDAX articles: {e}")
+
+    print("Fetching MDAX articles...")
+    try:
+        mdax_articles = get_articles_finanznachrichten("https://www.finanznachrichten.de/nachrichten-index/mdax-50.htm")
+        print(f"Got {len(mdax_articles)} MDAX articles")
+        term_articles.extend(mdax_articles)
+    except Exception as e:
+        print(f"Error fetching MDAX articles: {e}")
+
+    print("Fetching TecDAX articles...")
+    try:
+        tecdax_articles = get_articles_finanznachrichten("https://www.finanznachrichten.de/nachrichten-index/tecdax.htm")
+        print(f"Got {len(tecdax_articles)} TecDAX articles")
+        term_articles.extend(tecdax_articles)
+    except Exception as e:
+        print(f"Error fetching TecDAX articles: {e}")
+
+    print("Fetching CNBC articles...")
+    try:
+        cnbc_articles = get_articles_cnbc_latest("https://www.cnbc.com/")
+        print(f"Got {len(cnbc_articles)} CNBC articles")
+        term_articles.extend(cnbc_articles)
+    except Exception as e:
+        print(f"Error fetching CNBC articles: {e}")
+
+    print("Fetching Finanzen.net articles...")
+    try:
+        finanzen_articles = get_articles_finanzen_latest("https://www.finanzen.net/nachrichten/ressort/aktien")
+        print(f"Got {len(finanzen_articles)} Finanzen.net articles")
+        term_articles.extend(finanzen_articles)
+    except Exception as e:
+        print(f"Error fetching Finanzen.net articles: {e}")
+
+    print(f"Total articles fetched: {len(term_articles)}")
 
     if term_articles:
         for term_article in term_articles:
@@ -1194,43 +1262,48 @@ def get_amount_to_sell(positions: dict, stock_scores: dict, final_trade_term_sco
 
 
 # retrieves most recent closing price for a given stock
-def get_stock_closing_price(stock: str, max_retries: int = 5) -> float:
+def get_stock_closing_price(stock: str, max_retries: int = 3) -> float:
     """
-    Gets the most recent closing price for a given stock using Alpha Vantage API as a fallback.
+    Gets the most recent closing price for a given stock using Yahoo Finance.
     """
-    ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
-    if not ALPHA_VANTAGE_API_KEY:
-        print("Alpha Vantage API key not set in environment.")
-        return 0.0
-
     # Fix for German tickers
     if stock.split('.')[0] in german_tickers and not stock.endswith('.DE'):
         stock = f"{stock}.DE"
 
-    # Alpha Vantage uses US tickers; for non-US, you may need to adjust the symbol (e.g., BMW.DE)
-    symbol = stock
-
-    url = f"https://www.alphavantage.co/query"
-    params = {
-        "function": "GLOBAL_QUOTE",
-        "symbol": symbol,
-        "apikey": ALPHA_VANTAGE_API_KEY
-    }
-
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
-            if "Global Quote" in data and "05. price" in data["Global Quote"]:
-                price = float(data["Global Quote"]["05. price"])
-                if price > 0:
-                    return price
+            ticker = yf.Ticker(stock)
+
+            # Try to get the current price from info first (faster)
+            info = ticker.info
+
+            # Try multiple price fields in order of preference
+            price = None
+            if 'currentPrice' in info and info['currentPrice']:
+                price = float(info['currentPrice'])
+            elif 'regularMarketPrice' in info and info['regularMarketPrice']:
+                price = float(info['regularMarketPrice'])
+            elif 'previousClose' in info and info['previousClose']:
+                price = float(info['previousClose'])
+
+            # If info doesn't work, try historical data
+            if not price or price <= 0:
+                history = ticker.history(period="1d")
+                if not history.empty:
+                    price = float(history['Close'].iloc[-1])
+
+            # Validate and return price
+            if price and price > 0:
+                return price
             else:
-                print(f"[Attempt {attempt+1}] No price found for {stock}. Response: {data}")
+                print(f"[Attempt {attempt+1}] No valid price found for {stock}")
+
         except Exception as e:
             print(f"[Attempt {attempt+1}] Error fetching price for {stock}: {e}")
 
-        time.sleep(12)  # Alpha Vantage free tier: 5 requests/minute
+        # Short delay before retry
+        if attempt < max_retries - 1:
+            time.sleep(1)
 
     print(f"Failed to fetch reliable price for {stock} after {max_retries} attempts.")
     return 0.0
